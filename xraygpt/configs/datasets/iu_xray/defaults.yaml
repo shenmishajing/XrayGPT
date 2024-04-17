@@ -1,0 +1,5 @@
+datasets:
+  iuxray:
+    data_type: images
+    build_info:
+      storage: data/iu_xray/iu_xray_R2GenGPT

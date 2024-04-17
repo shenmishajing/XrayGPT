@@ -5,17 +5,23 @@
  For full license text, see the LICENSE_Lavis file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 """
 
+import json
 import logging
 import os
 
+from tqdm import trange
+
 import torch
 import torch.distributed as dist
-from xraygpt.common.dist_utils import get_rank, get_world_size, is_main_process, is_dist_avail_and_initialized
+from xraygpt.common.dist_utils import (
+    get_rank,
+    get_world_size,
+    is_dist_avail_and_initialized,
+    is_main_process,
+)
 from xraygpt.common.logger import MetricLogger, SmoothedValue
 from xraygpt.common.registry import registry
 from xraygpt.datasets.data_utils import prepare_sample
-
-import csv #for imprgpt rogue eval
 
 
 class BaseTask:
@@ -58,9 +64,9 @@ class BaseTask:
             builder = registry.get_builder_class(name)(dataset_config)
             dataset = builder.build_datasets()
 
-            dataset['train'].name = name
-            if 'sample_ratio' in dataset_config:
-                dataset['train'].sample_ratio = dataset_config.sample_ratio
+            dataset["train"].name = name
+            if "sample_ratio" in dataset_config:
+                dataset["train"].sample_ratio = dataset_config.sample_ratio
 
             datasets[name] = dataset
 
@@ -69,7 +75,7 @@ class BaseTask:
     def train_step(self, model, samples):
         loss = model(samples)["loss"]
         return loss
-    
+
     def test_step(self, model, samples):
         output_text, output_token = model.test(samples)
         return output_text
@@ -129,7 +135,7 @@ class BaseTask:
             cuda_enabled=cuda_enabled,
             accum_grad_iters=accum_grad_iters,
         )
-    
+
     def test_epoch(
         self,
         epoch,
@@ -144,7 +150,7 @@ class BaseTask:
     ):
         return self._test_inner_loop(
             epoch=epoch,
-            iters_per_epoch=lr_scheduler.iters_per_epoch,
+            iters_per_epoch=len(data_loader.loaders[0]._dataloader.loader),
             model=model,
             data_loader=data_loader,
             optimizer=optimizer,
@@ -182,7 +188,7 @@ class BaseTask:
             cuda_enabled=cuda_enabled,
             accum_grad_iters=accum_grad_iters,
         )
-    
+
     def test_iters(
         self,
         epoch,
@@ -287,8 +293,8 @@ class BaseTask:
             if (i + 1) % accum_grad_iters == 0:
                 if use_amp:
                     scaler.step(optimizer)
-                    scaler.update()                     
-                else:    
+                    scaler.update()
+                else:
                     optimizer.step()
                 optimizer.zero_grad()
 
@@ -303,7 +309,7 @@ class BaseTask:
             k: "{:.3f}".format(meter.global_avg)
             for k, meter in metric_logger.meters.items()
         }
-    
+
     def _test_inner_loop(
         self,
         epoch,
@@ -327,11 +333,11 @@ class BaseTask:
             # convert to iterator if not already
             data_loader = iter(data_loader)
 
-        for I in range(iters_per_epoch) :
+        for I in trange(iters_per_epoch):
             samples = next(data_loader)
 
             samples = prepare_sample(samples, cuda_enabled=cuda_enabled)
-            
+
             with torch.cuda.amp.autocast(enabled=use_amp):
                 output_text = self.test_step(model=model, samples=samples)
 
@@ -341,14 +347,11 @@ class BaseTask:
             output_text = output_text.replace("#", "")
             output_text = output_text.replace("___", "")
 
-            fields=[str(samples['image_id'][0].tolist()), output_text, samples['caption'][0]]
-            with open(r'/home/omkarthawakar/fahad/ImprMiniGPT/ours_medclip/minigpt4_stage3_all_v2.2(mimic_chatgpt)_radiology_finetune/20230509154/result/vanilla_minigpt.csv', 'a') as f:
-                writer = csv.writer(f)
-                writer.writerow(fields)
-
-            print('{}/{}'.format(I,iters_per_epoch))
-
-
+            with open("iuxray_prediction.jsonl", "a") as f:
+                json.dump(
+                    {"image_id": samples["image_id"][0], "caption": output_text}, f
+                )
+                f.write("\n")
 
     @staticmethod
     def save_result(result, result_dir, filename, remove_duplicate=""):
